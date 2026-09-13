@@ -11,6 +11,9 @@ namespace Fiap.TechChallenge.LambdaAuth.Tests.Observability;
 
 public class CorrelationTests
 {
+    private const string CpfValidoComMascara = "529.982.247-25";
+    private const string CpfValidoNormalizado = "52998224725";
+
     private readonly CpfValidatorService _cpfValidator = new();
     private readonly IClienteRepository  _repo         = Substitute.For<IClienteRepository>();
     private readonly JwtService          _jwt          = new(
@@ -22,12 +25,12 @@ public class CorrelationTests
     [Fact]
     public async Task Handler_ComCorrelationIdNoHeader_DevolveOMesmoValor()
     {
-        _repo.ObterClienteAtivoPorCpfAsync("52998224725", Arg.Any<CancellationToken>())
+        _repo.ObterClienteAtivoPorCpfAsync(CpfValidoNormalizado, Arg.Any<CancellationToken>())
              .Returns(Guid.NewGuid());
 
         var request = new APIGatewayProxyRequest
         {
-            Body    = JsonSerializer.Serialize(new AuthRequest("529.982.247-25")),
+            Body    = JsonSerializer.Serialize(new AuthRequest(CpfValidoComMascara)),
             Headers = new Dictionary<string, string> { ["x-correlation-id"] = "abc-123" }
         };
 
@@ -42,12 +45,12 @@ public class CorrelationTests
     public async Task Handler_SemCorrelationId_UsaAwsRequestId()
     {
         _ctx.AwsRequestId.Returns("req-999");
-        _repo.ObterClienteAtivoPorCpfAsync("52998224725", Arg.Any<CancellationToken>())
+        _repo.ObterClienteAtivoPorCpfAsync(CpfValidoNormalizado, Arg.Any<CancellationToken>())
              .Returns(Guid.NewGuid());
 
         var request = new APIGatewayProxyRequest
         {
-            Body = JsonSerializer.Serialize(new AuthRequest("529.982.247-25"))
+            Body = JsonSerializer.Serialize(new AuthRequest(CpfValidoComMascara))
         };
 
         var response = await CriarFunction().HandleAsync(request, _ctx);

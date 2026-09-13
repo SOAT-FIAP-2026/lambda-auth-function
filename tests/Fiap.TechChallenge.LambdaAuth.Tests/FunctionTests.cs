@@ -14,6 +14,9 @@ namespace Fiap.TechChallenge.LambdaAuth.Tests;
 
 public class FunctionTests
 {
+    private const string CpfValidoComMascara = "529.982.247-25";
+    private const string CpfValidoNormalizado = "52998224725";
+
     private readonly CpfValidatorService _cpfValidator = new();
     private readonly IClienteRepository  _repo         = Substitute.For<IClienteRepository>();
     private readonly JwtService          _jwt          = new(
@@ -29,10 +32,10 @@ public class FunctionTests
     public async Task Handler_CpfValidoClienteAtivo_Retorna200ComToken()
     {
         var clienteId = Guid.NewGuid();
-        _repo.ObterClienteAtivoPorCpfAsync("52998224725", Arg.Any<CancellationToken>())
+        _repo.ObterClienteAtivoPorCpfAsync(CpfValidoNormalizado, Arg.Any<CancellationToken>())
              .Returns(clienteId);
 
-        var request = CriarRequest(JsonSerializer.Serialize(new AuthRequest("529.982.247-25")));
+        var request = CriarRequest(JsonSerializer.Serialize(new AuthRequest(CpfValidoComMascara)));
         var response = await CriarFunction().HandleAsync(request, _ctx);
 
         response.StatusCode.Should().Be((int)HttpStatusCode.OK);
@@ -60,7 +63,7 @@ public class FunctionTests
         _repo.ObterClienteAtivoPorCpfAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
              .ThrowsAsync(new ClienteNaoAutorizadoException("não encontrado"));
 
-        var request = CriarRequest(JsonSerializer.Serialize(new AuthRequest("529.982.247-25")));
+        var request = CriarRequest(JsonSerializer.Serialize(new AuthRequest(CpfValidoComMascara)));
         var response = await CriarFunction().HandleAsync(request, _ctx);
 
         response.StatusCode.Should().Be((int)HttpStatusCode.Unauthorized);
@@ -72,7 +75,7 @@ public class FunctionTests
         _repo.ObterClienteAtivoPorCpfAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
              .ThrowsAsync(new Exception("db down"));
 
-        var request = CriarRequest(JsonSerializer.Serialize(new AuthRequest("529.982.247-25")));
+        var request = CriarRequest(JsonSerializer.Serialize(new AuthRequest(CpfValidoComMascara)));
         var response = await CriarFunction().HandleAsync(request, _ctx);
 
         response.StatusCode.Should().Be((int)HttpStatusCode.InternalServerError);
