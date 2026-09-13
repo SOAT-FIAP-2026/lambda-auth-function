@@ -51,7 +51,9 @@ flowchart TD
 | Acesso a dados | Dapper 2.1 + Npgsql 8 (PostgreSQL) |
 | Token | `System.IdentityModel.Tokens.Jwt` + `Microsoft.IdentityModel.Tokens` (HMAC-SHA256) |
 | Testes | xUnit, FluentAssertions, NSubstitute |
-| Qualidade | SonarQube Cloud ([build.yml](.github/workflows/build.yml)) |
+| Infraestrutura | Terraform — Lambda, IAM, Security Group, CloudWatch e API Gateway HTTP |
+| CI | GitHub Actions — build, testes com cobertura e SonarQube Cloud ([build.yml](.github/workflows/build.yml)) |
+| CD | GitHub Actions — empacota e aplica o Terraform ([cd.yml](.github/workflows/cd.yml)) |
 | Observabilidade | Log JSON em CloudWatch Logs, correlacionado por `X-Correlation-ID` |
 
 ## Contrato da API
@@ -139,6 +141,53 @@ Configure as variáveis de ambiente acima antes de invocar; o handler é
 
 ## Deploy
 
+### Automático (GitHub Actions)
+
+O workflow [cd.yml](.github/workflows/cd.yml) roda a cada push em `main` que toque
+`src/**` ou `infra/**`: executa os testes, empacota a função, aplica o Terraform de
+[`infra/`](infra/) e publica a URL do endpoint no resumo do job.
+
+Secrets e variables necessários no repositório:
+
+| Nome | Tipo | Conteúdo |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | secret | credenciais de deploy |
+| `DB_CONNECTION_STRING` | secret | conexão Npgsql para o RDS de soat-db |
+| `JWT_SECRET` | secret | chave HMAC de no mínimo 32 caracteres |
+| `VPC_ID` | variable | VPC criada em soat-infra |
+| `SUBNET_IDS` | variable | lista JSON das subnets privadas, ex.: `["subnet-aaa","subnet-bbb"]` |
+| `AWS_REGION` | variable | região do RDS e da VPC (padrão `sa-east-1`) |
+
+### Terraform
+
+[`infra/`](infra/) provisiona a função, a role de execução, o Security Group, os log
+groups e o API Gateway HTTP com a rota `POST /auth/token`:
+
+```bash
+# 1. empacotar (o Terraform lê o .zip por package_path)
+cd src/Fiap.TechChallenge.LambdaAuth
+dotnet lambda package --configuration Release --framework net8.0   --output-package ../../lambda-auth.zip
+
+# 2. aplicar
+cd ../../infra
+cp terraform.tfvars.example terraform.tfvars   # preencha rede e segredos
+export TF_VAR_db_connection_string="Host=...;Port=5432;Database=techchallengedb;Username=postgres;Password=..."
+export TF_VAR_jwt_secret="<chave de 32+ caracteres>"
+terraform init
+terraform plan
+terraform apply
+
+# 3. endpoint publicado
+terraform output -raw auth_endpoint
+```
+
+`terraform.tfvars` e `lambda-auth.zip` estão no `.gitignore`; nenhum segredo é
+versionado. A função sobe nas subnets privadas informadas em `subnet_ids` para
+alcançar o RDS; com a lista vazia ela é publicada fora da VPC, útil só para teste de
+contrato sem banco.
+
+### Deploy manual sem Terraform
+
 Empacotamento:
 
 ```bash
@@ -170,10 +219,9 @@ porta 5432.
 
 ### Pendente
 
-Terraform da função, integração com o API Gateway e workflow de CD ainda não existem
-neste repositório — hoje o [build.yml](.github/workflows/build.yml) executa apenas
-build e análise SonarQube. Não há endpoint publicado; por isso o README traz os comandos
-de deploy manual acima em vez de uma URL ativa.
+Não há endpoint publicado: o deploy depende de credenciais AWS e da VPC de soat-infra
+estarem disponíveis. Assim que o CD rodar, a URL sai no output `auth_endpoint` e deve
+substituir o `baseUrl` da collection Postman.
 
 ## Observabilidade
 
@@ -212,6 +260,7 @@ lambda-auth-function/
 │   ├── Exceptions/                   # CpfInvalido, ClienteNaoAutorizado
 │   └── Observability/StructuredLogger.cs
 ├── tests/Fiap.TechChallenge.LambdaAuth.Tests/
+├── infra/                            # Terraform: Lambda, IAM, API Gateway, logs
 └── docs/postman/
 ```
 

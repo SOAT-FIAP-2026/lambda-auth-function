@@ -41,3 +41,19 @@ coverage/
 *.trx
 *.coveragexml
 lcov.info
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+.terraformrc
+terraform.rc
+
+# Pacote da Lambda
+lambda-auth.zip
