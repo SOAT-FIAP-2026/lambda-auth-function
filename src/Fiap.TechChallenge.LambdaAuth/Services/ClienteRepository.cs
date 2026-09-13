@@ -16,9 +16,9 @@ public class ClienteRepository : IClienteRepository
     public async Task<Guid> ObterClienteAtivoPorCpfAsync(string cpf, CancellationToken ct = default)
     {
         const string sql = """
-            SELECT "Id", "ApagadoEm"
-            FROM "Clientes"
-            WHERE "CpfCnpj" = @cpf
+            SELECT id AS "Id", apagado_em AS "ApagadoEm"
+            FROM cliente
+            WHERE cpf_cnpj = @cpf
             LIMIT 1
             """;
 
