@@ -1,0 +1,14 @@
+{
+  "profile": "default",
+  "region": "us-east-1",
+  "configuration": "Release",
+  "framework": "net8.0",
+  "function-architecture": "x86_64",
+  "function-runtime": "dotnet8",
+  "function-memory-size": 256,
+  "function-timeout": 30,
+  "function-handler": "Fiap.TechChallenge.LambdaAuth::Fiap.TechChallenge.LambdaAuth.Function::HandleAsync",
+  "package-type": "Zip",
+  "s3-prefix": "lambda/auth/",
+  "environment-variables": "DB_CONNECTION_STRING=Host=localhost;Port=5432;Database=techchallenge;Username=postgres;Password=postgres;JWT_SECRET=dev-secret-key-change-in-production-min-32-chars;JWT_ISSUER=fiap-tech-challenge;JWT_AUDIENCE=fiap-api;JWT_EXPIRES_IN_SECONDS=3600"
+}
