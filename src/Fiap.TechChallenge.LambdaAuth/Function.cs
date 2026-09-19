@@ -30,8 +30,7 @@ public class Function
     public Function() : this(
         new CpfValidatorService(),
         new ClienteRepository(
-            Environment.GetEnvironmentVariable("DB_CONNECTION_STRING")
-            ?? throw new InvalidOperationException("DB_CONNECTION_STRING não configurada.")),
+            new SsmConnectionStringProvider(Environment.GetEnvironmentVariable("DB_CONNECTION_STRING"))),
         new JwtService(
             Environment.GetEnvironmentVariable("JWT_SECRET")
             ?? throw new InvalidOperationException("JWT_SECRET não configurada."),

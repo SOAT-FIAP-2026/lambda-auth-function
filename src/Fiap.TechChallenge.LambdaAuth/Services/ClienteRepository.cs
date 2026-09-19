@@ -6,23 +6,28 @@ namespace Fiap.TechChallenge.LambdaAuth.Services;
 
 public class ClienteRepository : IClienteRepository
 {
-    private readonly string _connectionString;
+    private readonly IConnectionStringProvider _connectionStringProvider;
+
+    public ClienteRepository(IConnectionStringProvider connectionStringProvider)
+    {
+        _connectionStringProvider = connectionStringProvider;
+    }
 
     public ClienteRepository(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
+        : this(new SsmConnectionStringProvider(connectionString))
+    { }
 
     public async Task<Guid> ObterClienteAtivoPorCpfAsync(string cpf, CancellationToken ct = default)
     {
         const string sql = """
-            SELECT "Id", "ApagadoEm"
-            FROM "Clientes"
-            WHERE "CpfCnpj" = @cpf
+            SELECT id AS "Id", apagado_em AS "ApagadoEm"
+            FROM cliente
+            WHERE cpf_cnpj = @cpf
             LIMIT 1
             """;
 
-        await using var conn = new NpgsqlConnection(_connectionString);
+        var connectionString = await _connectionStringProvider.ObterConnectionStringAsync(ct);
+        await using var conn = new NpgsqlConnection(connectionString);
         var row = await conn.QueryFirstOrDefaultAsync<ClienteRow>(
             new CommandDefinition(sql, new { cpf }, cancellationToken: ct));
 
