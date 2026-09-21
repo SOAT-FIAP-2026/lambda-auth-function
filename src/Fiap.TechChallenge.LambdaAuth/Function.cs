@@ -18,9 +18,9 @@ public class Function
 
     private readonly CpfValidatorService _cpfValidator;
     private readonly IClienteRepository  _repository;
-    private readonly JwtService          _jwtService;
+    private readonly IJwtService         _jwtService;
 
-    public Function(CpfValidatorService cpfValidator, IClienteRepository repository, JwtService jwtService)
+    public Function(CpfValidatorService cpfValidator, IClienteRepository repository, IJwtService jwtService)
     {
         _cpfValidator = cpfValidator;
         _repository   = repository;
@@ -32,11 +32,11 @@ public class Function
         new ClienteRepository(
             new SsmConnectionStringProvider(Environment.GetEnvironmentVariable("DB_CONNECTION_STRING"))),
         new JwtService(
-            Environment.GetEnvironmentVariable("JWT_SECRET")
-            ?? throw new InvalidOperationException("JWT_SECRET não configurada."),
-            Environment.GetEnvironmentVariable("JWT_ISSUER")   ?? "fiap-tech-challenge",
-            Environment.GetEnvironmentVariable("JWT_AUDIENCE") ?? "fiap-api",
-            int.TryParse(Environment.GetEnvironmentVariable("JWT_EXPIRES_IN_SECONDS"), out var exp) ? exp : 3600))
+            new SsmJwtOptionsProvider(
+                Environment.GetEnvironmentVariable("JWT_SECRET"),
+                Environment.GetEnvironmentVariable("JWT_ISSUER"),
+                Environment.GetEnvironmentVariable("JWT_AUDIENCE"),
+                int.TryParse(Environment.GetEnvironmentVariable("JWT_EXPIRES_IN_SECONDS"), out var exp) ? exp : null)))
     { }
 
     public async Task<APIGatewayProxyResponse> HandleAsync(
@@ -54,7 +54,7 @@ public class Function
             var authRequest    = DeserializarRequest(request.Body);
             var cpfNormalizado = _cpfValidator.ValidarENormalizar(authRequest?.Cpf ?? "");
             var clienteId      = await _repository.ObterClienteAtivoPorCpfAsync(cpfNormalizado);
-            var (token, expiresIn) = _jwtService.GerarToken(clienteId, cpfNormalizado);
+            var (token, expiresIn) = await _jwtService.GerarTokenAsync(clienteId, cpfNormalizado);
 
             return Responder(
                 HttpStatusCode.OK,

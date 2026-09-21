@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - "src/**"
-      - "infra/**"
       - ".github/workflows/cd.yml"
   workflow_dispatch:
 
@@ -15,6 +14,9 @@ permissions:
 
 env:
   PACKAGE: lambda-auth.zip
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_ACCESS_KEY_SECRET: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+  AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
 
 jobs:
   package-and-deploy:
@@ -23,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
@@ -44,45 +46,52 @@ jobs:
           --framework net8.0
           --output-package ${{ github.workspace }}/${{ env.PACKAGE }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ vars.AWS_REGION || 'sa-east-1' }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
-        with:
-          terraform_version: 1.9.8
-
-      - name: Terraform init
-        working-directory: infra
-        run: terraform init -input=false
-
-      - name: Terraform apply
-        working-directory: infra
-        env:
-          TF_VAR_package_path: ${{ github.workspace }}/${{ env.PACKAGE }}
-          TF_VAR_db_connection_string: ${{ secrets.DB_CONNECTION_STRING }}
-          TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
-          TF_VAR_vpc_id: ${{ vars.VPC_ID }}
-          # Lista JSON, ex.: ["subnet-aaa","subnet-bbb"]. Vazio publica a funcao fora da VPC.
-          TF_VAR_subnet_ids: ${{ vars.SUBNET_IDS || '[]' }}
-          TF_VAR_aws_region: ${{ vars.AWS_REGION || 'sa-east-1' }}
+      - name: Validar existência de credenciais AWS
         run: |
-          if [ -z "$TF_VAR_db_connection_string" ] || [ -z "$TF_VAR_jwt_secret" ]; then
-            echo "Secrets DB_CONNECTION_STRING e JWT_SECRET precisam estar definidos no repositorio."
+          if [ -z "${{ env.AWS_ACCESS_KEY_SECRET }}" ]; then
+            echo "::error::Credenciais da AWS não encontradas nos secrets (ACCESS_KEY_ID ou AWS_ACCESS_KEY_ID)."
             exit 1
           fi
-          terraform apply -auto-approve -input=false
+          echo "Credenciais da AWS encontradas nos secrets."
 
-      - name: Publicar endpoint no resumo do job
-        working-directory: infra
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_ACCESS_KEY_SECRET }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION || 'sa-east-1' }}
+
+      - name: Upload pacote para o S3
         run: |
-          echo "### Endpoint de autenticacao" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          terraform output -raw auth_endpoint >> "$GITHUB_STEP_SUMMARY"
-          echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          S3_BUCKET="${{ vars.LAMBDA_S3_BUCKET || 'soat-fiap-backend-tfstate' }}"
+          S3_KEY="${{ vars.LAMBDA_S3_KEY || 'lambda/auth/lambda-auth.zip' }}"
+          echo "Fazendo upload para s3://${S3_BUCKET}/${S3_KEY}..."
+          aws s3 cp "${{ github.workspace }}/${{ env.PACKAGE }}" "s3://${S3_BUCKET}/${S3_KEY}"
+
+      - name: Atualizar código da Lambda na AWS
+        run: |
+          FUNCTION_NAME="${{ vars.LAMBDA_FUNCTION_NAME || 'techchallenge-lambda-auth' }}"
+          S3_BUCKET="${{ vars.LAMBDA_S3_BUCKET || 'soat-fiap-backend-tfstate' }}"
+          S3_KEY="${{ vars.LAMBDA_S3_KEY || 'lambda/auth/lambda-auth.zip' }}"
+
+          echo "Verificando se a função Lambda '$FUNCTION_NAME' está ativa na AWS..."
+          if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
+            echo "Função encontrada. Atualizando código a partir do S3..."
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --s3-bucket "$S3_BUCKET" \
+              --s3-key "$S3_KEY"
+
+            echo "### Deploy Concluído" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Pacote:** Publicado em \`s3://${S3_BUCKET}/${S3_KEY}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Lambda:** Código da função \`${FUNCTION_NAME}\` atualizado com sucesso na AWS." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Função Lambda '$FUNCTION_NAME' não encontrada (infraestrutura efêmera está DOWN)."
+            echo "### Pacote Publicado no S3" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Pacote:** Publicado com sucesso em \`s3://${S3_BUCKET}/${S3_KEY}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Status:** A função \`${FUNCTION_NAME}\` não está ativa no momento (infra efêmera DOWN)." >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Próximo passo:** Quando a infraestrutura for provisionada via \`soat-infra\`, o Terraform carregará este pacote automaticamente do S3." >> "$GITHUB_STEP_SUMMARY"
+          fi
