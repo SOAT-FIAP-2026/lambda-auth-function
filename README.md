@@ -100,22 +100,23 @@ Toda resposta devolve o header `X-Correlation-ID`. Se o chamador enviar o header
 Esta função é um único endpoint e não publica Swagger próprio: o contrato acima e a
 collection Postman são a documentação oficial dela.
 
-## Variáveis de ambiente
+## Variáveis e Parâmetros (AWS SSM Parameter Store)
 
-| Variável | Obrigatória | Padrão | Descrição |
-|---|---|---|---|
-| `DB_CONNECTION_STRING` | sim | — | Conexão Npgsql para o PostgreSQL/RDS |
-| `JWT_SECRET` | sim | — | Chave HMAC, mínimo de 32 caracteres |
-| `JWT_ISSUER` | não | `fiap-tech-challenge` | Claim `iss` |
-| `JWT_AUDIENCE` | não | `fiap-api` | Claim `aud` |
-| `JWT_EXPIRES_IN_SECONDS` | não | `3600` | Validade do token |
+A função recupera todas as suas configurações dinamicamente no cold start a partir do **AWS SSM Parameter Store** (com cache em memória e decodificação KMS):
 
-Nenhum valor secreto é versionado. `JWT_SECRET` e `DB_CONNECTION_STRING` devem vir de
-Secrets Manager/SSM ou dos Secrets do GitHub Actions.
+| Parâmetro SSM | Variável de Ambiente (Fallback Local) | Descrição |
+|---|---|---|
+| `/techchallenge/prod/db_connection_string` | `DB_CONNECTION_STRING` | Conexão Npgsql para o PostgreSQL/RDS |
+| `/techchallenge/prod/jwt_secret` | `JWT_SECRET` | Chave HMAC de no mínimo 32 caracteres |
+| `/techchallenge/prod/jwt_issuer` | `JWT_ISSUER` | Claim `iss` (padrão: `TechChallenge`) |
+| `/techchallenge/prod/jwt_audience` | `JWT_AUDIENCE` | Claim `aud` (padrão: `techchallenge.com.br`) |
+| `/techchallenge/prod/jwt_expires_in_seconds` | `JWT_EXPIRES_IN_SECONDS` | Validade do token em segundos (padrão: `3600`) |
 
-## Execução
+Nenhum segredo precisa ser versionado nem mantido nos secrets do repositório: os parâmetros são mantidos centralmente no SSM e provisionados pelo bootstrap de [soat-infra](https://github.com/SOAT-FIAP-2026/soat-infra).
 
-Pré-requisitos: .NET SDK 8 e, para empacotar, `Amazon.Lambda.Tools`.
+## Execução Local
+
+Pré-requisitos: .NET SDK 8 e `Amazon.Lambda.Tools`.
 
 ```bash
 # restaurar e compilar
@@ -125,7 +126,7 @@ dotnet build
 # rodar os testes
 dotnet test
 
-# ferramenta de empacotamento (uma vez por máquina)
+# ferramenta de empacotamento
 dotnet tool install -g Amazon.Lambda.Tools
 ```
 
@@ -136,55 +137,25 @@ dotnet tool install -g Amazon.Lambda.TestTool-8.0
 dotnet lambda-test-tool-8.0
 ```
 
-Configure as variáveis de ambiente acima antes de invocar; o handler é
+Para execução local, você pode definir as variáveis de ambiente acima diretamente na sua máquina; o handler é:
 `Fiap.TechChallenge.LambdaAuth::Fiap.TechChallenge.LambdaAuth.Function::HandleAsync`.
 
-## Deploy
+## Deploy e Infraestrutura
 
-### Automático (GitHub Actions)
+A infraestrutura desta função (IAM Role, CloudWatch Log Group, VPC/Security Group e API Gateway HTTP) é gerenciada centralmente em [soat-infra](https://github.com/SOAT-FIAP-2026/soat-infra) através dos módulos `modules/lambda` e `modules/api_gateway`.
 
-O workflow [cd.yml](.github/workflows/cd.yml) roda a cada push em `main` que toque
-`src/**` ou `infra/**`: executa os testes, empacota a função, aplica o Terraform de
-[`infra/`](infra/) e publica a URL do endpoint no resumo do job.
+### CI/CD (GitHub Actions)
 
-Secrets e variables necessários no repositório:
+- **CI ([build.yml](.github/workflows/build.yml))**: Executa a cada push e PR, realizando restore, build, testes e análise de qualidade no SonarQube Cloud.
+- **CD ([cd.yml](.github/workflows/cd.yml))**: Executa a cada push em `main`, empacota a aplicação via `dotnet lambda package`, publica o `.zip` no bucket S3 permanente (`soat-fiap-backend-tfstate/lambda/auth/lambda-auth.zip`) e atualiza o código da Lambda na AWS se a infraestrutura estiver ativa.
 
-| Nome | Tipo | Conteúdo |
+Secrets necessários (nível de organização ou repositório):
+
+| Nome | Tipo | Descrição |
 |---|---|---|
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | secret | credenciais de deploy |
-| `DB_CONNECTION_STRING` | secret | conexão Npgsql para o RDS de soat-db |
-| `JWT_SECRET` | secret | chave HMAC de no mínimo 32 caracteres |
-| `VPC_ID` | variable | VPC criada em soat-infra |
-| `SUBNET_IDS` | variable | lista JSON das subnets privadas, ex.: `["subnet-aaa","subnet-bbb"]` |
-| `AWS_REGION` | variable | região do RDS e da VPC (padrão `sa-east-1`) |
-
-### Terraform
-
-[`infra/`](infra/) provisiona a função, a role de execução, o Security Group, os log
-groups e o API Gateway HTTP com a rota `POST /auth/token`:
-
-```bash
-# 1. empacotar (o Terraform lê o .zip por package_path)
-cd src/Fiap.TechChallenge.LambdaAuth
-dotnet lambda package --configuration Release --framework net8.0   --output-package ../../lambda-auth.zip
-
-# 2. aplicar
-cd ../../infra
-cp terraform.tfvars.example terraform.tfvars   # preencha rede e segredos
-export TF_VAR_db_connection_string="Host=...;Port=5432;Database=techchallengedb;Username=postgres;Password=..."
-export TF_VAR_jwt_secret="<chave de 32+ caracteres>"
-terraform init
-terraform plan
-terraform apply
-
-# 3. endpoint publicado
-terraform output -raw auth_endpoint
-```
-
-`terraform.tfvars` e `lambda-auth.zip` estão no `.gitignore`; nenhum segredo é
-versionado. A função sobe nas subnets privadas informadas em `subnet_ids` para
-alcançar o RDS; com a lista vazia ela é publicada fora da VPC, útil só para teste de
-contrato sem banco.
+| `ACCESS_KEY_ID` (ou `AWS_ACCESS_KEY_ID`) | secret | Chave de acesso da AWS |
+| `ACCESS_KEY_SECRET` (ou `AWS_SECRET_ACCESS_KEY`) | secret | Chave secreta da AWS |
+| `ACCESS_SESSION_TOKEN` (ou `AWS_SESSION_TOKEN`) | secret | Token de sessão da AWS (opcional) |
 
 ### Deploy manual sem Terraform
 
