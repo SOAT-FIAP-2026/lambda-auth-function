@@ -35,8 +35,8 @@ public class Function
         new JwtService(
             Environment.GetEnvironmentVariable("JWT_SECRET")
             ?? throw new InvalidOperationException("JWT_SECRET não configurada."),
-            Environment.GetEnvironmentVariable("JWT_ISSUER")   ?? "fiap-tech-challenge",
-            Environment.GetEnvironmentVariable("JWT_AUDIENCE") ?? "fiap-api",
+            Environment.GetEnvironmentVariable("JWT_ISSUER")   ?? "TechChallenge",
+            Environment.GetEnvironmentVariable("JWT_AUDIENCE") ?? "techchallenge.com.br",
             int.TryParse(Environment.GetEnvironmentVariable("JWT_EXPIRES_IN_SECONDS"), out var exp) ? exp : 3600))
     { }
 
